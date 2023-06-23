@@ -17,7 +17,7 @@
 using namespace manifold;
 
 namespace {
-const int precision_ = 8;
+const int max_precision = 8;
 
 C2::ClipType cliptype_of_op(OpType op) {
   C2::ClipType ct = C2::ClipType::Union;
@@ -132,6 +132,13 @@ void decompose_hole(const C2::PolyTreeD* outline,
   }
 }
 
+int precision(C2::PathsD paths) {
+  auto rect = C2::GetBounds(paths);
+  float size_x = glm::max(fabs(rect.left), fabs(rect.right));
+  float size_y = glm::max(fabs(rect.bottom), fabs(rect.top));
+  int magnitude = floor(log10(glm::max(size_x, size_y)));
+  return std::max(0, max_precision - magnitude);
+}
 }  // namespace
 
 namespace manifold {
@@ -179,7 +186,7 @@ CrossSection::CrossSection(C2::PathsD ps) { paths_ = shared_paths(ps); }
  */
 CrossSection::CrossSection(const SimplePolygon& contour, FillRule fillrule) {
   auto ps = C2::PathsD{(pathd_of_contour(contour))};
-  paths_ = shared_paths(C2::Union(ps, fr(fillrule), precision_));
+  paths_ = shared_paths(C2::Union(ps, fr(fillrule), precision(ps)));
 }
 
 /**
@@ -199,7 +206,7 @@ CrossSection::CrossSection(const Polygons& contours, FillRule fillrule) {
   for (auto ctr : contours) {
     ps.push_back(pathd_of_contour(ctr));
   }
-  paths_ = shared_paths(C2::Union(ps, fr(fillrule), precision_));
+  paths_ = shared_paths(C2::Union(ps, fr(fillrule), precision(ps)));
 }
 
 // Private
@@ -273,8 +280,10 @@ CrossSection CrossSection::Circle(float radius, int circularSegments) {
 CrossSection CrossSection::Boolean(const CrossSection& second,
                                    OpType op) const {
   auto ct = cliptype_of_op(op);
-  auto res = C2::BooleanOp(ct, C2::FillRule::Positive, GetPaths(),
-                           second.GetPaths(), precision_);
+  auto a = GetPaths();
+  auto b = second.GetPaths();
+  int precis = std::min(precision(a), precision(b));
+  auto res = C2::BooleanOp(ct, C2::FillRule::Positive, a, b, precis);
   return CrossSection(res);
 }
 
@@ -302,8 +311,8 @@ CrossSection CrossSection::BatchBoolean(
   }
 
   auto ct = cliptype_of_op(op);
-  auto res =
-      C2::BooleanOp(ct, C2::FillRule::Positive, subjs, clips, precision_);
+  int precis = std::min(precision(subjs), precision(clips));
+  auto res = C2::BooleanOp(ct, C2::FillRule::Positive, subjs, clips, precis);
   return CrossSection(res);
 }
 
@@ -375,8 +384,9 @@ std::vector<CrossSection> CrossSection::Decompose() const {
   }
 
   C2::PolyTreeD tree;
-  C2::BooleanOp(C2::ClipType::Union, C2::FillRule::Positive, GetPaths(),
-                C2::PathsD(), tree, precision_);
+  auto paths = GetPaths();
+  C2::BooleanOp(C2::ClipType::Union, C2::FillRule::Positive, paths,
+                C2::PathsD(), tree, precision(paths));
 
   auto polys = std::vector<C2::PathsD>();
   decompose_outline(&tree, polys, 0);
@@ -399,7 +409,8 @@ std::vector<CrossSection> CrossSection::Decompose() const {
  */
 CrossSection CrossSection::RectClip(const Rect& rect) const {
   auto r = C2::RectD(rect.min.x, rect.min.y, rect.max.x, rect.max.y);
-  auto ps = C2::RectClip(r, GetPaths(), precision_);
+  auto paths = GetPaths();
+  auto ps = C2::RectClip(r, paths, precision(paths));
   return CrossSection(ps);
 }
 
@@ -498,7 +509,8 @@ CrossSection CrossSection::Warp(
     }
     warped.push_back(s);
   }
-  return CrossSection(C2::Union(warped, C2::FillRule::Positive, precision_));
+  return CrossSection(
+      C2::Union(warped, C2::FillRule::Positive, precision(warped)));
 }
 
 /**
@@ -541,6 +553,8 @@ CrossSection CrossSection::Simplify(double epsilon) const {
 CrossSection CrossSection::Offset(double delta, JoinType jointype,
                                   double miter_limit,
                                   int circularSegments) const {
+  auto paths = GetPaths();
+  int precis = precision(paths);
   double arc_tol = 0.;
   if (jointype == JoinType::Round) {
     int n = circularSegments > 2 ? circularSegments
@@ -549,12 +563,11 @@ CrossSection CrossSection::Offset(double delta, JoinType jointype,
     // (radius) in order to get back the same number of segments in Clipper2:
     // steps_per_360 = PI / acos(1 - arc_tol / abs_delta)
     const double abs_delta = std::fabs(delta);
-    const double scaled_delta = abs_delta * std::pow(10, precision_);
+    const double scaled_delta = abs_delta * std::pow(10, precis);
     arc_tol = (std::cos(Clipper2Lib::PI / n) - 1) * -scaled_delta;
   }
-  auto ps =
-      C2::InflatePaths(GetPaths(), delta, jt(jointype), C2::EndType::Polygon,
-                       miter_limit, precision_, arc_tol);
+  auto ps = C2::InflatePaths(paths, delta, jt(jointype), C2::EndType::Polygon,
+                             miter_limit, precis, arc_tol);
   return CrossSection(ps);
 }
 
