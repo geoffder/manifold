@@ -160,10 +160,11 @@ class CrossSection {
   ///@}
 
  private:
-  mutable std::shared_ptr<const C2::PathsD> paths_;
+  mutable std::shared_ptr<const C2::Paths64> paths_;
   mutable glm::mat3x2 transform_ = glm::mat3x2(1.0f);
-  CrossSection(C2::PathsD paths);
-  C2::PathsD GetPaths() const;
+  int precision_ = 8;
+  CrossSection(C2::Paths64 paths, int precision);
+  C2::Paths64 GetPaths() const;
 };
 /** @} */
 
@@ -190,6 +191,7 @@ class Rect {
   Rect(Rect&&) noexcept;
   Rect& operator=(Rect&&) noexcept;
   Rect(const glm::vec2 a, const glm::vec2 b);
+  Rect(const Polygons polys);
   ///@}
 
   /** @name Information

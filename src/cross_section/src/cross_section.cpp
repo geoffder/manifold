@@ -14,10 +14,15 @@
 
 #include "cross_section.h"
 
+#include <cstdint>
+
+#include "glm/common.hpp"
+#include "glm/ext/vector_float2.hpp"
+#include "public.h"
+
 using namespace manifold;
 
 namespace {
-const int max_precision = 8;
 
 C2::ClipType cliptype_of_op(OpType op) {
   C2::ClipType ct = C2::ClipType::Union;
@@ -67,51 +72,104 @@ C2::JoinType jt(CrossSection::JoinType jointype) {
   return jt;
 }
 
-glm::vec2 v2_of_pd(const C2::PointD p) { return {p.x, p.y}; }
+glm::vec2 v2_of_p64(const C2::PointD p, float scale) {
+  return {(float)p.x * scale, (float)p.y * scale};
+}
 
-C2::PointD v2_to_pd(const glm::vec2 v) { return C2::PointD(v.x, v.y); }
+C2::Point64 v2_to_p64(const glm::vec2 v, float scale) {
+  return C2::Point64(v.x * scale, v.y * scale);
+}
 
-C2::PathD pathd_of_contour(const SimplePolygon& ctr) {
-  auto p = C2::PathD();
+C2::Path64 path64_of_contour(const SimplePolygon& ctr, float scale) {
+  auto p = C2::Path64();
   p.reserve(ctr.size());
   for (auto v : ctr) {
-    p.push_back(v2_to_pd(v));
+    p.push_back(v2_to_p64(v, scale));
   }
   return p;
 }
 
-C2::PathsD transform(const C2::PathsD ps, const glm::mat3x2 m) {
+// glm::vec2 v2_of_pd(const C2::PointD p) { return {p.x, p.y}; }
+
+// C2::PointD v2_to_pd(const glm::vec2 v) { return C2::PointD(v.x, v.y); }
+
+// C2::PathD pathd_of_contour(const SimplePolygon& ctr) {
+//   auto p = C2::PathD();
+//   p.reserve(ctr.size());
+//   for (auto v : ctr) {
+//     p.push_back(v2_to_pd(v));
+//   }
+//   return p;
+// }
+
+// C2::Paths64 transform(const C2::Paths64 ps, const glm::mat3x2 m) {
+//   const bool invert = glm::determinant(glm::mat2(m)) < 0;
+//   auto transformed = C2::Paths64();
+//   transformed.reserve(ps.size());
+//   for (auto path : ps) {
+//     auto sz = path.size();
+//     auto s = C2::PathD(sz);
+//     for (int i = 0; i < sz; ++i) {
+//       auto idx = invert ? sz - 1 - i : i;
+//       s[idx] = v2_to_pd(m * glm::vec3(path[i].x, path[i].y, 1));
+//     }
+//     transformed.push_back(s);
+//   }
+//   return transformed;
+// }
+// Polygons transform(const Polygons ps, const glm::mat3x2 m) {
+//   const bool invert = glm::determinant(glm::mat2(m)) < 0;
+//   auto transformed = Polygons();
+//   transformed.reserve(ps.size());
+//   for (auto poly : ps) {
+//     auto sz = poly.size();
+//     auto s = SimplePolygon(sz);
+//     for (int i = 0; i < sz; ++i) {
+//       auto idx = invert ? sz - 1 - i : i;
+//       s[idx] = m * glm::vec3(poly[i].x, poly[i].y, 1);
+//     }
+//     transformed.push_back(s);
+//   }
+//   return transformed;
+// }
+C2::Paths64 transform(const C2::Paths64 ps, const glm::mat3x2 m,
+                      const float from_scale, const float to_scale) {
   const bool invert = glm::determinant(glm::mat2(m)) < 0;
-  auto transformed = C2::PathsD();
+  auto transformed = C2::Paths64();
   transformed.reserve(ps.size());
   for (auto path : ps) {
     auto sz = path.size();
-    auto s = C2::PathD(sz);
+    auto s = C2::Path64(sz);
     for (int i = 0; i < sz; ++i) {
       auto idx = invert ? sz - 1 - i : i;
-      s[idx] = v2_to_pd(m * glm::vec3(path[i].x, path[i].y, 1));
+      s[idx] = v2_to_p64(
+          m * glm::vec3(path[i].x * from_scale, path[i].y * from_scale, 1),
+          to_scale);
     }
     transformed.push_back(s);
   }
   return transformed;
 }
 
-std::shared_ptr<const C2::PathsD> shared_paths(const C2::PathsD& ps) {
-  return std::make_shared<const C2::PathsD>(ps);
+// std::shared_ptr<const Polygons> shared_polys(const Polygons& ps) {
+//   return std::make_shared<const Polygons>(ps);
+// }
+std::shared_ptr<const C2::Paths64> shared_paths(const C2::Paths64& ps) {
+  return std::make_shared<const C2::Paths64>(ps);
 }
 
 // forward declaration for mutual recursion
-void decompose_hole(const C2::PolyTreeD* outline,
-                    std::vector<C2::PathsD>& polys, C2::PathsD& poly,
+void decompose_hole(const C2::PolyTree64* outline,
+                    std::vector<C2::Paths64>& polys, C2::Paths64& poly,
                     int n_holes, int j);
 
-void decompose_outline(const C2::PolyTreeD* tree,
-                       std::vector<C2::PathsD>& polys, int i) {
+void decompose_outline(const C2::PolyTree64* tree,
+                       std::vector<C2::Paths64>& polys, int i) {
   auto n_outlines = tree->Count();
   if (i < n_outlines) {
     auto outline = tree->Child(i);
     auto n_holes = outline->Count();
-    auto poly = C2::PathsD(n_holes + 1);
+    auto poly = C2::Paths64(n_holes + 1);
     poly[0] = outline->Polygon();
     decompose_hole(outline, polys, poly, n_holes, 0);
     polys.push_back(poly);
@@ -121,8 +179,8 @@ void decompose_outline(const C2::PolyTreeD* tree,
   }
 }
 
-void decompose_hole(const C2::PolyTreeD* outline,
-                    std::vector<C2::PathsD>& polys, C2::PathsD& poly,
+void decompose_hole(const C2::PolyTree64* outline,
+                    std::vector<C2::Paths64>& polys, C2::Paths64& poly,
                     int n_holes, int j) {
   if (j < n_holes) {
     auto child = outline->Child(j);
@@ -132,13 +190,21 @@ void decompose_hole(const C2::PolyTreeD* outline,
   }
 }
 
-int precision(C2::PathsD paths) {
-  auto rect = C2::GetBounds(paths);
-  float size_x = glm::max(fabs(rect.left), fabs(rect.right));
-  float size_y = glm::max(fabs(rect.bottom), fabs(rect.top));
-  int magnitude = floor(log10(glm::max(size_x, size_y)));
-  return std::max(0, max_precision - magnitude);
+int precision(Polygons polys) {
+  auto rect = Rect(polys);
+  float size_x = glm::max(fabs(rect.min.x), fabs(rect.max.x));
+  float size_y = glm::max(fabs(rect.min.y), fabs(rect.max.y));
+  float size = glm::max(size_x, size_y);
+  int magnitude = size == 0. ? -1 : floor(log10(size));
+  return 8 - magnitude + 1;  // 8 decimal places when integer part is zero
 }
+// int precision(C2::Paths64 paths) {
+//   auto rect = C2::GetBounds(paths);
+//   float size_x = glm::max(fabs(rect.left), fabs(rect.right));
+//   float size_y = glm::max(fabs(rect.bottom), fabs(rect.top));
+//   int magnitude = floor(log10(glm::max(size_x, size_y)));
+//   return std::max(0, max_precision - magnitude);
+// }
 }  // namespace
 
 namespace manifold {
@@ -146,7 +212,7 @@ namespace manifold {
 /**
  * The default constructor is an empty cross-section (containing no contours).
  */
-CrossSection::CrossSection() { paths_ = shared_paths(C2::PathsD()); }
+CrossSection::CrossSection() { paths_ = shared_paths(C2::Paths64()); }
 
 CrossSection::~CrossSection() = default;
 CrossSection::CrossSection(CrossSection&&) noexcept = default;
@@ -162,18 +228,23 @@ CrossSection& CrossSection::operator=(CrossSection&&) noexcept = default;
 CrossSection::CrossSection(const CrossSection& other) {
   paths_ = other.paths_;
   transform_ = other.transform_;
+  precision_ = other.precision_;
 }
 
 CrossSection& CrossSection::operator=(const CrossSection& other) {
   if (this != &other) {
     paths_ = other.paths_;
     transform_ = other.transform_;
+    precision_ = other.precision_;
   }
   return *this;
 };
 
 // Private, skips unioning.
-CrossSection::CrossSection(C2::PathsD ps) { paths_ = shared_paths(ps); }
+CrossSection::CrossSection(C2::Paths64 ps, int precision) {
+  paths_ = shared_paths(ps);
+  precision_ = precision;
+}
 
 /**
  * Create a 2d cross-section from a single contour. A boolean union operation
@@ -185,8 +256,10 @@ CrossSection::CrossSection(C2::PathsD ps) { paths_ = shared_paths(ps); }
  * created by self-intersections in contour.
  */
 CrossSection::CrossSection(const SimplePolygon& contour, FillRule fillrule) {
-  auto ps = C2::PathsD{(pathd_of_contour(contour))};
-  paths_ = shared_paths(C2::Union(ps, fr(fillrule), precision(ps)));
+  precision_ = precision(Polygons{contour});
+  float scale = std::pow(10, precision_);
+  auto ps = C2::Paths64{(path64_of_contour(contour, scale))};
+  paths_ = shared_paths(C2::Union(ps, fr(fillrule)));
 }
 
 /**
@@ -201,10 +274,12 @@ CrossSection::CrossSection(const SimplePolygon& contour, FillRule fillrule) {
  * contours.
  */
 CrossSection::CrossSection(const Polygons& contours, FillRule fillrule) {
-  auto ps = C2::PathsD();
+  precision_ = precision(contours);
+  float scale = std::pow(10, precision_);
+  auto ps = C2::Paths64();
   ps.reserve(contours.size());
   for (auto ctr : contours) {
-    ps.push_back(pathd_of_contour(ctr));
+    ps.push_back(path64_of_contour(ctr, scale));
   }
   paths_ = shared_paths(C2::Union(ps, fr(fillrule), precision(ps)));
 }
@@ -212,7 +287,7 @@ CrossSection::CrossSection(const Polygons& contours, FillRule fillrule) {
 // Private
 // All access to paths_ should be done through the GetPaths() method, which
 // applies the accumulated transform_
-C2::PathsD CrossSection::GetPaths() const {
+C2::Paths64 CrossSection::GetPaths() const {
   if (transform_ == glm::mat3x2(1.0f)) {
     return *paths_;
   }
@@ -250,7 +325,7 @@ CrossSection CrossSection::Square(const glm::vec2 size, bool center) {
     p[2] = C2::PointD(x, y);
     p[3] = C2::PointD(0.0, y);
   }
-  return CrossSection(C2::PathsD{p});
+  return CrossSection(C2::Paths64{p});
 }
 
 /**
@@ -271,7 +346,7 @@ CrossSection CrossSection::Circle(float radius, int circularSegments) {
   for (int i = 0; i < n; ++i) {
     circle[i] = C2::PointD(radius * cosd(dPhi * i), radius * sind(dPhi * i));
   }
-  return CrossSection(C2::PathsD{circle});
+  return CrossSection(C2::Paths64{circle});
 }
 
 /**
@@ -303,7 +378,7 @@ CrossSection CrossSection::BatchBoolean(
   for (int i = 1; i < crossSections.size(); ++i) {
     n_clips += crossSections[i].GetPaths().size();
   }
-  auto clips = C2::PathsD();
+  auto clips = C2::Paths64();
   clips.reserve(n_clips);
   for (int i = 1; i < crossSections.size(); ++i) {
     auto ps = crossSections[i].GetPaths();
@@ -386,9 +461,9 @@ std::vector<CrossSection> CrossSection::Decompose() const {
   C2::PolyTreeD tree;
   auto paths = GetPaths();
   C2::BooleanOp(C2::ClipType::Union, C2::FillRule::Positive, paths,
-                C2::PathsD(), tree, precision(paths));
+                C2::Paths64(), tree);
 
-  auto polys = std::vector<C2::PathsD>();
+  auto polys = std::vector<C2::Paths64>();
   decompose_outline(&tree, polys, 0);
 
   auto n_polys = polys.size();
@@ -497,7 +572,7 @@ CrossSection CrossSection::Transform(const glm::mat3x2& m) const {
 CrossSection CrossSection::Warp(
     std::function<void(glm::vec2&)> warpFunc) const {
   auto paths = GetPaths();
-  auto warped = C2::PathsD();
+  auto warped = C2::Paths64();
   warped.reserve(paths.size());
   for (auto path : paths) {
     auto sz = path.size();
@@ -648,6 +723,27 @@ Rect::Rect(const Rect& other) {
 Rect::Rect(const glm::vec2 a, const glm::vec2 b) {
   min = glm::min(a, b);
   max = glm::max(a, b);
+}
+
+/**
+ * Create a rectangle that contains all of the points in the given set of
+ * contours.
+ */
+Rect::Rect(const Polygons polys) {
+  auto rect = Rect();
+  for (auto p : polys) {
+    for (auto v : p) {
+      if (v.x < rect.min.x)
+        rect.min.x = v.x;
+      else if (v.x > rect.max.x)
+        rect.max.x = v.x;
+      if (v.y < rect.min.y)
+        rect.min.y = v.y;
+      else if (v.y > rect.max.y)
+        rect.max.y = v.y;
+    }
+  }
+  return rect;
 }
 
 /**
